@@ -1,0 +1,341 @@
+#ifndef MAIN_H
+#define MAIN_H
+#include <Arduino.h>
+#include <SPI.h>
+#include <Wire.h>
+
+char szTime[6];
+bool isUpdate;
+
+#include <WiFiManager.h>
+bool wifi_init(const char *apName, const char *apPassword);
+
+#include <RTClib.h>
+RTC_DS3231 rtc;
+
+#include <NTPClient.h>
+// change next line to use with another board/shield
+#include <ESP8266WiFi.h>
+// #include <WiFi.h> // for WiFi shield
+// #include <WiFi101.h> // for WiFi 101 shield or MKR1000
+#include <WiFiUdp.h>
+WiFiUDP ntpUDP;               // UDP 客户端
+NTPClient timeClient(ntpUDP); // NTP 客户端
+void ntp_init(const char *poolServerName, long timeOffset, unsigned long updateInterval);
+void update_time_ntp_rtc();
+
+#define DISP_MDM_TEST
+
+#ifdef DISP_MDP_TEST
+#include <MD_Parola.h>
+#include <MD_MAX72xx.h>
+#include <SPI.h>
+MD_Parola P = MD_Parola(MD_MAX72XX::FC16_HW, D6, 4);
+void mdp_init();
+void mdp_loop();
+void getTime(char *psz, bool f = true);
+#endif // DISP_MDP_TEST
+
+#ifdef DISP_MDM_TEST
+#include <MD_MAX72xx.h>
+#include <SPI.h>
+MD_MAX72XX M = MD_MAX72XX(MD_MAX72XX::FC16_HW, D6, 4);
+void mdm_init();
+void mdm_loop();
+#endif // DISP_MDM_TEST
+
+#ifdef DISP_LC_TEST
+#include <LedControl.h>
+LedControl lc = LedControl(D7, D5, D6, 4);
+void lc_init();
+void lc_loop();
+#include "Font.h"
+#endif // DISP_LC_TEST
+
+#ifdef DISP_LCC_TEST
+#include <LedControl.h>
+LedControl lc = LedControl(D7, D5, D6, 4);
+#include "LedControl_Clock.h"
+LedControl_Clock mc = LedControl_Clock(&rtc, &lc, 4);
+void mc_test();
+#endif // DISP_LCC_TEST
+
+#endif // MAIN_H
+
+#include "main.h"
+
+void setup()
+{
+  // 初始化 串口
+  Serial.begin(9600);
+  Serial.println("Serial : 9600");
+  rtc.begin();
+  Serial.println("ClockMain::rtc_init : OK!");
+  wifi_init("ESP", "147258369..");
+  Serial.println("ClockMain::wifi_init : OK!");
+  ntp_init("ntp3.aliyun.com", 60 * 60 * 8, 1000 * 60 * 60);
+  Serial.println("ClockMain::ntp_init : OK!");
+
+#ifdef DISP_MDP_TEST
+  mdp_init();
+  Serial.println("mdp_init : OK!");
+#endif // DISP_MDP_TEST
+
+#ifdef DISP_MDM
+  mdm_init();
+  Serial.println("mdm_init : OK!");
+#endif // DISP_MDM_TEST
+
+#ifdef DISP_LC_TEST
+  lc_init();
+  Serial.println("lc_init : OK!");
+#endif // DISP_LC_TEST
+
+#ifdef DISP_LCC_TEST
+  mc.begin();
+  mc.clearDisplay();
+  Serial.println("mc.begin() : OK!");
+#endif // DISP_LCC_TEST
+
+#ifdef DISP_U8G2_TEST
+#include <U8g2lib.h>
+#ifdef U8X8_HAVE_HW_SPI
+#include <SPI.h>
+#endif
+#ifdef U8X8_HAVE_HW_I2C
+#include <Wire.h>
+#endif
+U8G2_MAX7219_32X8_F_4W_SW_SPI um8g2 = U8G2_MAX7219_32X8_F_4W_SW_SPI(U8G2_R0, DISP_CLK_PIN, DISP_DATA_PIN, DISP_CS_PIN, U8X8_PIN_NONE, U8X8_PIN_NONE);
+#endif // DISP_U8G2_TEST
+
+  Serial.print("ntp_FormattedTime : ");
+  Serial.println(timeClient.getFormattedTime());
+  Serial.print("ntp_EpochTime : ");
+  Serial.println(timeClient.getEpochTime());
+  DateTime now = rtc.now();
+  Serial.print("rtc_secondstime : ");
+  Serial.println(now.secondstime());
+  Serial.print("rtc_timestamp : ");
+  Serial.println(now.timestamp());
+  update_time_ntp_rtc();
+  isUpdate = false;
+}
+
+void loop()
+{
+  timeClient.update();
+
+#ifdef DISP_MDP_TEST
+  mdp_loop();
+#endif // DISP_MDP_TEST
+
+#ifdef DISP_MDM_TEST
+  mdm_loop();
+#endif // DISP_MDM_TEST
+
+#ifdef DISP_LC_TEST
+  lc_loop();
+#endif // DISP_LC_TEST
+
+#ifdef DISP_LCC_TEST
+  mc_test();
+#endif // DISP_LCC_TEST
+}
+
+bool wifi_init(const char *apName, const char *apPassword)
+{
+  // WiFiManager, Local intialization. Once its business is done, there is no need to keep it around
+  WiFiManager wm;
+
+  // reset settings - wipe stored credentials for testing
+  // these are stored by the esp library
+  // wm.resetSettings();
+
+  // Automatically connect using saved credentials,
+  // if connection fails, it starts an access point with the specified name ( "AutoConnectAP"),
+  // if empty will auto generate SSID, if password is blank it will be anonymous AP (wm.autoConnect())
+  // then goes into a blocking loop awaiting configuration and will return success result
+
+  bool res;
+  // res = wm.autoConnect(); // auto generated AP name from chipid
+  // res = wm.autoConnect("AutoConnectAP"); // anonymous ap
+  res = wm.autoConnect(apName, apPassword); // password protected ap
+
+  if (!res)
+  {
+    Serial.println("Failed to connect");
+    // ESP.restart();
+  }
+  else
+  {
+    // if you get here you have connected to the WiFi
+    Serial.println("connected...yeey :)");
+  }
+  return res;
+}
+
+void ntp_init(const char *poolServerName, long timeOffset, unsigned long updateInterval)
+{
+  timeClient.begin();
+  timeClient.setPoolServerName(poolServerName);
+  timeClient.setTimeOffset(timeOffset);
+  timeClient.setUpdateInterval(updateInterval);
+  timeClient.update();
+}
+
+void update_time_ntp_rtc()
+{
+  timeClient.forceUpdate();
+  rtc.adjust(DateTime(timeClient.getEpochTime()));
+}
+
+#ifdef DISP_MDP_TEST
+void mdp_init()
+{
+  P.begin();
+  P.setIntensity(2);
+  P.displayText(szTime, PA_CENTER, 100, 2000, PA_SCROLL_RIGHT, PA_SCROLL_RIGHT);
+}
+
+void mdp_loop()
+{
+  // static uint32_t lastTime = 0; // millis() memory
+  static bool flasher = false; // seconds passing flasher
+  if (P.displayAnimate())
+  {
+    // if (millis() - lastTime >= 1000)
+    {
+      // lastTime = millis();
+      getTime(szTime, flasher);
+      flasher = !flasher;
+      P.displayReset();
+    }
+  }
+}
+
+void getTime(char *psz, bool f)
+{
+  // 从RTC获取当前时间
+  DateTime now = rtc.now();
+  sprintf(psz, "%02d%c%02d", now.hour(), (f ? ':' : ' '), now.minute());
+  if (now.hour() == 2 && !isUpdate)
+  {
+    update_time_ntp_rtc();
+    isUpdate = true;
+  }
+  if (now.hour() == 3 && isUpdate)
+  {
+    isUpdate = false;
+  }
+}
+#endif // DISP_MDP_TEST
+
+#ifdef DISP_MDM_TEST
+void mdm_init()
+{
+  M.begin();
+  M.control(MD_MAX72XX::INTENSITY, 2);
+}
+
+void mdm_loop()
+{
+  
+}
+#endif // DISP_MDM_TEST
+
+#ifdef DISP_LC_TEST
+void lc_init()
+{
+  for (uint8_t i = 0; i < lc.getDeviceCount(); i++)
+  {
+    // Serial.print("lc_init(): i= ");
+    // Serial.println(i);
+    lc.shutdown(i, false);
+    lc.setIntensity(i, 2);
+  }
+}
+
+void lc_loop()
+{
+  for (uint8_t i = 0; i < lc.getDeviceCount(); i++)
+    lc.clearDisplay(i);
+  lc.setChar(0, 0, 'a', false);
+  lc.setChar(1, 1, 'b', false);
+  lc.setChar(2, 2, 'c', false);
+  lc.setChar(3, 3, 'd', false);
+}
+#endif // DISP_LC_TEST
+
+#ifdef DISP_LCC_TEST
+void mc_test()
+{
+  // for (size_t i = 31; i < 127; i++)
+  // {
+  //   Serial.println("mc_test for");
+  //   mc.clearDisplay();
+  //   mc.char2Arr4Big(i, 31, 0);
+  //   mc.char2Arr4Small(i, 15, 0);
+  //   mc.refDisplay();
+  //   delay(5000);
+  // }
+
+  mc.clearDisplay();
+  mc.char2Arr4Big('X', 7, 0);
+  mc.char2Arr4Big('X', 5, 0);
+
+  mc.char2Arr4Big('X', 13, 0);
+  mc.char2Arr4Big('X', 15, 0);
+
+  mc.char2Arr4Big('S', 22, 0);
+  mc.char2Arr4Big('S', 22, 2);
+
+  mc.char2Arr4Big('S', 31, 0);
+  mc.char2Arr4Big('S', 31, -2);
+  mc.refDisplay();
+  delay(5000);
+}
+#endif // DISP_LC_TEST
+
+
+#include <Arduino.h>
+
+// put function declarations here:
+int myFunction(int, int);
+
+void setup() {
+  // put your setup code here, to run once:
+  int result = myFunction(2, 3);
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+}
+
+// put function definitions here:
+int myFunction(int x, int y) {
+  return x + y;
+}
+
+
+int liangdu = 0;
+char tmp[5];
+
+void setup()
+{
+  Serial.begin(9600);
+  P.begin();
+  P.setIntensity(2);
+}
+
+void loop()
+{
+  if (P.displayAnimate())
+  {
+    if (liangdu > 15)
+      liangdu = 0;
+    P.setIntensity(liangdu);
+    sprintf(tmp, "LD=%d", liangdu);
+    P.displayText(tmp, PA_CENTER, P.getSpeed(), 3000, PA_SCROLL_DOWN, PA_SCROLL_DOWN);
+    liangdu++;
+  }
+}
